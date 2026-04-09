@@ -66,34 +66,47 @@ def load_songs(csv_path: str) -> List[Dict]:
             })
     return songs
 
-def score_song(user_prefs: Dict, song: Dict) -> float:
+def score_song(
+    user_prefs: Dict,
+    song: Dict,
+    genre_weight: float = 3.0,
+    mood_weight: float = 2.0,
+    energy_weight: float = 1.0,
+) -> float:
     """Return a numeric score for a song based on how well it matches user preferences."""
     score = 0.0
     if song["genre"] == user_prefs.get("genre"):
-        score += 3.0
+        score += genre_weight
     if song["mood"] == user_prefs.get("mood"):
-        score += 2.0
-    score += 1 - abs(song["energy"] - user_prefs.get("energy", 0.5))
+        score += mood_weight
+    score += energy_weight * (1 - abs(song["energy"] - user_prefs.get("energy", 0.5)))
     if user_prefs.get("likes_acoustic"):
         score += song["acousticness"]
     return score
 
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
+def recommend_songs(
+    user_prefs: Dict,
+    songs: List[Dict],
+    k: int = 5,
+    genre_weight: float = 3.0,
+    mood_weight: float = 2.0,
+    energy_weight: float = 1.0,
+) -> List[Tuple[Dict, float, str]]:
     """Score every song, sort by score, and return the top k as (song, score, explanation) tuples."""
     def build_explanation(song: Dict) -> str:
         """Build a human-readable string listing each scoring rule and its contribution."""
         reasons = []
         if song["genre"] == user_prefs.get("genre"):
-            reasons.append(f"genre match ({song['genre']}) +3.0")
+            reasons.append(f"genre match ({song['genre']}) +{genre_weight:.1f}")
         if song["mood"] == user_prefs.get("mood"):
-            reasons.append(f"mood match ({song['mood']}) +2.0")
-        energy_points = 1 - abs(song["energy"] - user_prefs.get("energy", 0.5))
+            reasons.append(f"mood match ({song['mood']}) +{mood_weight:.1f}")
+        energy_points = energy_weight * (1 - abs(song["energy"] - user_prefs.get("energy", 0.5)))
         reasons.append(f"energy {song['energy']} vs target {user_prefs.get('energy', 0.5)} +{energy_points:.2f}")
         if user_prefs.get("likes_acoustic"):
             reasons.append(f"acousticness +{song['acousticness']:.2f}")
         return " | ".join(reasons)
 
-    scored = [(song, score_song(user_prefs, song)) for song in songs]
+    scored = [(song, score_song(user_prefs, song, genre_weight, mood_weight, energy_weight)) for song in songs]
     scored.sort(key=lambda x: x[1], reverse=True)
     return [(song, score, build_explanation(song)) for song, score in scored[:k]]

@@ -117,13 +117,124 @@ You can add more tests in `tests/test_recommender.py`.
 
 ---
 
+## Adversarial Profiles — Edge Case Testing
+
+These profiles were designed to stress-test the scoring logic by presenting conflicting, missing, or extreme preferences. Each one targets a specific weakness in the algorithm.
+
+---
+
+### #1 — The Impossible Combo
+
+**Profile:** `genre: lofi, mood: chill, energy: 0.9, likes_acoustic: False`
+
+> Chill mood but very high energy target. Lofi/chill songs have energy ~0.35–0.42, so mood match and energy closeness pull in opposite directions.
+
+![Adversarial #1 results](adv1.png)
+
+**What happened:** Genre and mood dominance won completely. The two lofi/chill songs (Midnight Coding, Library Rain) ranked #1 and #2 despite having energy ~0.42 — nearly the opposite of the 0.9 target. Storm Runner, whose energy 0.91 is almost a perfect energy match, ranked dead last at 0.99 because it matched neither genre nor mood. The combined +5.0 genre+mood bonus cannot be overcome by energy alone.
+
+---
+
+### #2 — The Ghost Genre
+
+**Profile:** `genre: metal, mood: intense, energy: 0.95, likes_acoustic: False`
+
+> "metal" does not exist in the catalog, so the +3.0 genre bonus never fires for any song.
+
+![Adversarial #2 results](adv2.png)
+
+**What happened:** The system fell back gracefully to mood and energy. Gym Hero and Storm Runner rose to the top by matching mood "intense" (+2.0) and having high energy. However, without genre firing, there is a large scoring cliff: the top two songs score ~2.97, while everything else scores below 1.0. The ranking is functional but shallow — only 2 songs triggered any meaningful bonus.
+
+---
+
+### #3 — The Missing Mood
+
+**Profile:** `genre: pop, mood: sad, energy: 0.7, likes_acoustic: False`
+
+> "sad" does not appear in any song's mood field, so the +2.0 mood bonus is permanently dead.
+
+![Adversarial #3 results](adv3.png)
+
+**What happened:** Genre dominance is exposed clearly. The two pop songs (Sunrise City 3.88, Gym Hero 3.77) rank far ahead of everything else. Songs #3–#5 cluster tightly between 0.95 and 0.98, showing that energy alone barely differentiates songs when no other signal fires. A user who prefers "sad" music gets happy and intense pop songs — the system has no way to penalize a wrong mood, only reward a correct one.
+
+---
+
+### #4 — The Acoustic Trap
+
+**Profile:** `genre: ambient, mood: chill, energy: 0.9, likes_acoustic: True`
+
+> Highly acoustic songs also tend to have very low energy. The acousticness bonus and energy closeness pull at completely opposite songs.
+
+![Adversarial #4 results](adv4.png)
+
+**What happened:** Acousticness + genre + mood overwhelmed the energy preference entirely. Spacewalk Thoughts ranked #1 with energy 0.28 — nearly the opposite of the requested 0.9 — because its genre, mood, and acousticness bonuses added up to +5.92. The system recommended calm, quiet ambient songs to a user who explicitly asked for high-energy music. This is the starkest example of the acoustic asymmetry bias: `likes_acoustic` adds reward but there is no equivalent penalty when it conflicts with energy.
+
+---
+
+### #5 — The Neutral Energy
+
+**Profile:** `genre: synthwave, mood: moody, energy: 0.5, likes_acoustic: False`
+
+> energy: 0.5 is the midpoint, so every song scores at least +0.5 on that rule, compressing the spread.
+
+![Adversarial #5 results](adv5.png)
+
+**What happened:** The single synthwave song (Night Drive Loop) dominated at 5.75 — far ahead of the rest — because it hit all three active signals. Songs without a genre or mood match clustered between 0.90 and 0.95, a very narrow band where ordering is nearly arbitrary. The neutral energy did compress the tail of the ranking, but the top result was still unambiguous because genre+mood combined create a large enough gap.
+
+---
+
+### #6 — The Blank Slate
+
+**Profile:** `genre: jazz, mood: melancholic, energy: 0.5, likes_acoustic: False`
+
+> "melancholic" is not in the catalog and jazz only has 2 songs. With most signals silent, rankings should collapse to energy closeness.
+
+![Adversarial #6 results](adv6.png)
+
+**What happened:** The two jazz songs (Coffee Shop Stories 3.87, Late Night Sax 3.83) still dominated because the +3.0 genre bonus is powerful enough to carry them even without a mood match. The remaining three slots (#3–#5) scored between 0.90 and 0.95 — separated by fractions of a point — making their order essentially arbitrary. The mood preference "melancholic" was completely invisible in the output: the system had no way to signal that it failed to find what the user actually wanted.
+
+---
+
 ## Experiments You Tried
 
-Use this section to document the experiments you ran. For example:
+Both experiments use the same baseline profile so results are directly comparable:
+`genre: lofi, mood: chill, energy: 0.4, likes_acoustic: True`
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+Default weights for reference: `genre=3.0, mood=2.0, energy=1.0`
+
+---
+
+### Experiment A — Weight Shift (genre ×0.5, energy ×2)
+
+**Change:** `genre_weight: 3.0 → 1.5` and `energy_weight: 1.0 → 2.0`
+
+Energy can now contribute up to **+2.0** instead of +1.0. A genre match is worth **+1.5** instead of +3.0.
+
+| Rank | Song | Score |
+|------|------|-------|
+| #1 | Library Rain — Paper Lanterns | 6.26 |
+| #2 | Midnight Coding — LoRoom | 6.17 |
+| #3 | Spacewalk Thoughts — Orbit Bloom | 4.68 |
+| #4 | Focus Flow — LoRoom | 4.28 |
+| #5 | Coffee Shop Stories — Slow Stereo | 2.83 |
+
+**What changed vs. baseline:** The top 2 songs stayed the same (Library Rain, Midnight Coding) because they match on all signals. The bigger shift is in #3 and below — Spacewalk Thoughts (no genre match) climbed into top 3 because its energy 0.28 is close enough to 0.4 to earn +1.76, and Focus Flow jumped up thanks to a perfect energy match scoring +2.00. The ranking became more sensitive to how close a song's energy is to the target, and the genre bonus lost some of its dominance.
+
+---
+
+### Experiment B — Feature Removal (mood weight = 0)
+
+**Change:** `mood_weight: 2.0 → 0.0` — equivalent to commenting out the mood check in `score_song`.
+
+| Rank | Song | Score |
+|------|------|-------|
+| #1 | Library Rain — Paper Lanterns | 4.81 |
+| #2 | Focus Flow — LoRoom | 4.78 |
+| #3 | Midnight Coding — LoRoom | 4.69 |
+| #4 | Coffee Shop Stories — Slow Stereo | 1.86 |
+| #5 | Late Night Sax — Slow Stereo | 1.84 |
+
+**What changed vs. baseline:** Removing mood reshuffled the lofi songs significantly. In the baseline, Midnight Coding ranked #1 because it matched mood "chill" (+2.0). Without that bonus, Focus Flow jumped to #2 — it has a perfect energy match (+1.00) and solid acousticness (+0.78), which now matter more. Library Rain held #1 due to strong acousticness (+0.86) edging it ahead. The bottom half changed entirely: jazz songs (Coffee Shop Stories, Late Night Sax) entered the top 5 purely on acousticness, showing that mood was previously blocking them from appearing.
 
 ---
 
